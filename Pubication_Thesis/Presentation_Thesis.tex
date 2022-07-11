@@ -1,0 +1,1258 @@
+\documentclass[10pt, handout]{beamer}
+%\documentclass{beamer}
+\usetheme{Warsaw}
+%\setbeamertemplate{page number in head/foot}[totalframenumber]  % it shows with total number like 1/26
+\setbeamertemplate{page number in head/foot}[framenumber]   %it only shows the slid number
+\pagenumbering{roman}
+\geometry{paperwidth=140mm,paperheight=105mm}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{tikz}
+\usepackage{tcolorbox}
+\usepackage{amsmath,amssymb,bm,epsfig,graphicx,longtable,lipsum}
+\usepackage{cancel}   %to cancel the math term
+
+
+\newcommand{\br}{\bm{r}}
+\newcommand{\brp}{\bm{r^\prime}}
+\newcommand{\bK}{\bm{K}}
+\newcommand{\bk}{\bm{k}}
+\newcommand{\bG}{\bm{G}}
+\newcommand{\bV}{\bm{V}}
+\newcommand{\wh}{\widehat} 
+\newcommand{\be}{\bm{e}}
+\newcommand{\vol}{\Omega}
+\newcommand{\Om}{\Omega}
+\newcommand{\lam}{\lambda}
+\newcommand{\OmE}{\Omega[\epsilon]}
+\newcommand{\btaua}{\bm{\tau_a}}
+\newcommand{\btaub}{\bm{\tau_b}}
+\newcommand{\sig}{\sigma}
+\newcommand{\al}{\alpha}
+\newcommand{\bet}{\beta}
+\newcommand{\btau}{\bm{\tau}}
+\newcommand{\eps}{\epsilon}
+\newcommand{\Id}{\underline{\underline{1}}}
+\newcommand{\teps}{\underline{\underline{\epsilon}}}
+
+\newcommand{\blue}[1]{{\color{blue} #1}}
+\newcommand{\red}[1]{{\color{red} #1}}
+
+\definecolor{amethyst}{rgb}{0.6, 0.4, 0.8}
+\definecolor{applegreen}{rgb}{0.55, 0.71, 0.0}
+\definecolor{americanrose}{rgb}{1.0, 0.01, 0.24}
+\definecolor{aoGreen}{rgb}{0.0, 0.5, 0.0}
+
+\newcommand{\sm}[1]{\begin{small} #1 \end{small}}
+
+\newcommand{\nologo}{\setbeamertemplate{logo}{}}  % to set logo to nothing. Use as {\nologo \begin{frame} \end{frame}}
+
+
+\begin{document}
+	%	\author[K. Belbase, Dr. A. Tr\"oster and Prof. P. Blaha]
+	\author[K. Belbase]{\includegraphics[height=2.5cm]{pdf/wien2k_logo_3.pdf} }%\hspace{10cm}\includegraphics[height=0.5cm]{pdf/fwf-logo_vektor_var2.pdf}}
+%	\author{K. Belbase, Dr. A. Tr\"oster and Prof. P. Blaha} 
+\title{The stress tensor in the APW based methods and its implementation in the WIEN2k code.}
+%\logo{}
+\institute[Vienna University of Technology]
+{Institute for Materials Chemistry\\
+	Vienna University of Technology \\
+	Vienna, Austria \\
+	\vspace{1cm}
+	K. Belbase }		
+\date[November 30, 2018]
+{ {} \today}
+
+\logo{\includegraphics[height=0.6cm]{pdf/wien2k_logo_3.pdf}\hspace{10cm}\includegraphics[height=0.5cm]{pdf/fwf-logo_vektor_var2.pdf}} 
+
+%\subject{}
+%\setbeamercovered{transparent}
+%\setbeamertemplate{navigation symbols}{}
+\begin{frame}[plain]
+	\maketitle
+\end{frame}
+
+
+
+
+%===============================================================================
+%  OUTLINE OF TALK
+%===============================================================================
+\begin{frame}
+	\frametitle{Outline}
+	\begin{itemize}
+		\item Stress tensor and its importance
+		\item Theoretical explanation
+		\item Results
+		\item Discussion and Outlook
+		%  	\item Previous project
+		%  	\item Conclusion \& outlook
+	\end{itemize}
+\end{frame}
+
+%===============================================================================
+% Importance of the stress tensor calculation
+%===============================================================================
+
+{\nologo
+	\begin{frame}
+		\frametitle{Why is stress ($\sigma_{\alpha\beta}$) so important for solid state DFT?}
+		\begin{itemize}
+		\item Stress tensor: derivative of E with respect to strain
+		\vspace{-3mm}
+		\begin{eqnarray*}
+			\Omega\sigma_{\alpha\beta} \equiv \frac{\partial E}{\partial \epsilon_{\alpha \beta}}\Big|_{\epsilon = 0}
+			\qquad \alpha,\beta = 1,2,3
+		\end{eqnarray*}
+		 Structure optimization:
+			\item \textbf{cubic} solid $\Rightarrow$ only $\Om$-dependence $\Rightarrow$ easy.
+			\begin{columns}[c]
+				\column{0.7\textwidth}
+				\begin{enumerate}
+					\item[*] perform DFT calculations for a number of volumes $V_i$
+					\item[*] fit resulting energies $E_i(\Om_i) ~to~ EOS (Murnaghan, Birch-Murnaghan, Vinet,\dots)$
+				\end{enumerate}
+				\column{0.3\textwidth}
+				\vspace{-5mm}
+%				\includegraphics[width=4cm]{EOSfit_Obertraun2018_aux.pdf}
+				\includegraphics[width=4cm]{pdf/RKmax_ene_vs_vol_Al_presentation.pdf}
+				\vspace{-5mm}       
+			\end{columns}
+			\item \textbf{tetragonal} solid $\Rightarrow$ expensive but still feasible.
+			\begin{enumerate}
+				\item for each volume $\Om_i$: perform a series of DFT calculations to determine the $c_i/a_i$ for which $E_i$ is minimal %(Volume optimization)
+				\item fit resulting $E_i$ and $\Om_i$ to EOS
+				\item perform final volume optimization for resulting volume $\Om(P)$ at prescribed pressure $P$.
+			\end{enumerate}
+			\item symmetry \textbf{lower than tetragonal, hexagonal or rhombohedral}: possible variations in all six independent components of $\epsilon_{\alpha \beta}$ must be considered $\Rightarrow$ extremely tedious, computationally expensive or even impossible.
+		\end{itemize}		
+	\end{frame}
+}
+%==========================================================================
+%   How to optimize the unit cell volume in WIEN2k calculations
+%==========================================================================
+
+\begin{frame}
+	\frametitle{Determining the equilibrium state from DFT}
+	\begin{center}
+		\includegraphics[height=4cm]{pdf/klue_layout.pdf}
+	\end{center}
+	
+	\begin{itemize}
+		
+		\item Solid need to relax not only forces ($F^a = -\frac{d E}{d R_a}$) but also determine equilibrium \textbf{lattice vectors} at a prescribed external stress $\sigma_{\alpha\beta}$.
+		\item We are looking for the specific unit cell dimensions for which
+		\begin{eqnarray*}
+			\Omega\sigma_{\alpha\beta} \equiv \frac{\partial E}{\partial \epsilon_{\alpha \beta}}\Big|_{\epsilon = 0}
+			\qquad \alpha,\beta = 1,2,3
+		\end{eqnarray*}
+		In most practical cases stress will be hydrostatic, so we search for a unit cell geometry for which 
+		\begin{eqnarray*}
+			-3\Omega P\delta_{\alpha\beta}\equiv \frac{\partial E}{\partial \epsilon_{\alpha \beta}}\Big|_{\epsilon = 0} 
+		\end{eqnarray*}
+	\end{itemize}
+\end{frame}
+
+%=========================================================================
+%Review of previous works
+%=========================================================================
+
+\begin{frame}
+\frametitle{Review of previous attempts}
+
+\begin{itemize}
+	\item \textbf{For plane wave based methods stress tensor implementation is already available}(\tiny{O. H. Nielsen \& R.M. Martin Phys. Rev. Lett. \textbf{50} (1983) 697} )
+\end{itemize}
+
+  many attempts on the full-potential linearized augmented plane-wave (LAPW) 
+
+\begin{itemize}
+	\item \textbf{Thonhauser, Singh \& Draxl} [1]
+	\begin{itemize}
+			\item [$\color{red}{\textbf{+}}$] only LDA for simple cubic systems
+			\item [$\color{red}{\textbf{-}}$] missing GGA, APW+lo, and semi core local orbitals.
+		\end{itemize}
+	\item \textbf{Nagasako \& Oguchi} [2]
+	\begin{itemize}
+			\item [$\color{green}{\textbf{+}}$] LDA and GGA 
+			\item [$\color{red}{\textbf{-}}$] no LOs, no follow-up papers
+			\item [$\color{red}{\textbf{-}}$] applies to Solar-William LAPW only and can not be applied to the standard LAPW.
+	%		\item [$\color{red}{\textbf{-}}$] can not be adopted directly for the FLAPW method
+		\end{itemize}
+	\item \textbf{Kl\"uppelberg \& Bl\"ugel} [3]
+	\begin{itemize}
+			\item [$\color{green}{\textbf{+}}$] extensive analytical calculations are presented
+			\item [$\color{red}{\textbf{-}}$] calculation has a huge error and the source is untraceable
+			\item [$\color{red}{\textbf{-}}$] only LDA, no LOs, GGA, APW+lo
+		\end{itemize}
+\end{itemize}
+
+\vspace{-0.01mm}
+
+{\tiny
+		\begin{itemize}
+				\item [1] Solid state comm. \textbf{124}, 275 (2002)
+				\item [2] J. Phys. Soc. Jpn. \textbf{80}, 024701 (2011)
+				\item [3] diploma thesis, J\"ulich (2012)
+			\end{itemize}
+	}	
+
+\end{frame}
+
+%===============================================================================================
+% DISCRIPTION OF the APW based methods and definition of the BASIS SET in this method
+%================================================================================================
+%{\nologo
+%	\begin{frame}
+%		\frametitle{Basis function in the APW based methods}
+%		\begin{figure}
+%			%\includegraphics[width=5cm]{pdf/potential_region.jpg}\hfil
+%			\includegraphics[height=2.5cm,width=4.5cm]{pdf/mT_IS.pdf}	
+%		\end{figure}
+%		
+%		Basis function in the APW based methods
+%		
+%		\[	
+%		\phi_{\textbf{kK}}(\br) = \begin{cases}
+%			\frac{e^{i( \textbf{k}+\textbf{K} ).\br}}{\sqrt{\Omega}}  &           \br \in IR   \\
+%			\sum_{lm} \Big[ a_{lm}^{ a \textbf{kK} } u_{l}^a(r,E_l^a) + \delta_{LAPW} b_{lm}^{ a \textbf{kK} } \dot{u}_{l}^a(r,E_l^a) \Big] Y_{lm}(\hat{ \br }_a) &  \br \in R_a
+%		\end{cases}  
+%		\]
+%		
+%		$a_{lm}^{ a \textbf{kK}}$ ( and $b_{lm}^{ a \textbf{kK}}$ in LAPW ) ensure the continuity of the value ( and also the slope in LAPW) of the basis function. 
+%		
+%		\begin{itemize}
+%			\item APW method: only the value of the basis function continuous and $E_l^a$ = $\epsilon$ bands energy.
+%			\item LAPW method: both the value and slope of the basis function continuous
+%			\item APW+lo: a different linearization in the APW method.
+%			\item Additional basis only to chemically important $l$ are added to describe the semi core states.  
+%		\end{itemize}			
+%	\end{frame}
+%}
+
+
+%===============================================================================================
+% Different flavor of the apw method
+%================================================================================================
+
+{\nologo
+	\begin{frame}
+		\frametitle{Basis function in the APW based methods}
+\small{
+	\begin{itemize}
+	\item Unit cell is divided into the atomic spheres and the interstitial region.			
+		\begin{figure}			
+			%\includegraphics[width=5cm]{pdf/potential_region.jpg}\hfil
+			\includegraphics[height=2.5cm,width=4.5cm]{pdf/muffinDivision.pdf}	
+		\end{figure} 
+		
+	\item Basis functions in the augmented plane wave (APW) method [Slater 1937].
+
+\begin{eqnarray}\nonumber
+	\phi_{\bk\bK}^{APW}(\br) =  \begin{cases}
+		\frac{1}{\sqrt{\Omega}} e^{i(\bk+\bK)\cdot\br}         & \br \in IS  \\
+		\sum_{lm} a_{lm}^{a\bk\bK} u_{l}^a(r,E) Y_{lm}(\hat{\br}) & \br \in R_a
+	\end{cases}\hspace{0.5cm}\label{APW_Basis_functions11}
+\end{eqnarray}
+
+	\item $u_{l}^a(r,E)$
+	is the numerical solution of the radial Schr\"odinger equation with the spherically symmetric potential ($V_{00}$)
+	at the eigenenergy $E$
+	\item This leads to a non-linear eigenvalue problem and a computationally very expensive process.
+	\item Energy dependency of $u_l^a(r,E)$ needs to be linearized
+\end{itemize}
+}		
+	\end{frame}
+}
+
+\begin{frame}
+	\frametitle{Basis function: LAPW  and APW+lo}
+	\begin{itemize}
+		\item Linearization inside the atomic sphere is introduced by choosing a linear combination of $u_{l}^a(r,E_l^a)$ at a fixed energy $E_l^a$ and it's energy derivative $\dot{u}^a_{l}(r,E_l^a)$ in linearized augmented plane wave (LAPW)[Anderson 1975]. 
+	\end{itemize}	
+\small{	
+	\begin{eqnarray}\nonumber
+		\phi_{\bk\bK}^{LAPW}(\br) =  \begin{cases}
+			\frac{1}{\sqrt{\Omega}} e^{i(\bk+\bK)\cdot\br}         & \br \in IS  \\
+			\sum_{lm} \Big[ a_{lm}^{ a \textbf{kK} } u_{l}^a(r,E_l^a) +  b_{lm}^{ a \textbf{kK} } \dot{u}_{l}^a(r,E_l^a) \Big] Y_{lm}(\hat{ \br }) &  \br \in R_a
+		\end{cases}\hspace{0.5cm}
+	\end{eqnarray}
+
+    \begin{itemize}
+    		\item $a_{lm}^{ a \textbf{kK}}$  and $b_{lm}^{ a \textbf{kK}}$ ensure the continuity of the value and slope  of the basis functions.
+    		\item Another linearization scheme: the APW plus local orbital (APW+lo) method [E. Sj\"ostedt \textit{et. al} 2000], where an APW basis is defined at a fixed energy $E_l^a$ and the energy dependency is linearized  by a set of local orbitals (lo).    
+    \begin{eqnarray}\nonumber
+    	\phi_{lo}^a(\br) =
+    	\begin{cases}
+    		0                                                                                          & \br  \in IS    \\
+    		\Big[ a_{l,lo}^a u_{l,lo}^a(r,E_l^a) + b_{l,lo}^a \dot{u}_{l,lo}^a(r,E_l^a) \Big] Y_{L}(\hat{\br}), &  \br \in R_a
+    	\end{cases}
+    \end{eqnarray}
+          \item Additional basis, the so-called LOs, only to chemically important $l$ are added to describe the semi core states ($E_{l,LO}^a$) [Singh 1991].  
+    \end{itemize}
+}
+
+\end{frame}
+
+
+
+%===================                               ===============
+%===================Total energy calculation in DFT===============
+%===================                               ===============
+{\nologo
+\begin{frame}
+	\frametitle{Total energy in Kohn-Sham DFT}
+\small{	
+	\begin{itemize}
+%		\item Using the initially estimated electron density, V$_\text{H}$ and $\mu_{\text{xc}}$ are defined.
+		\item One-electron Kohn-Sham equation is solved with $V_{\text{eff}}(\br)$ = V$_\text{C}(\br)$ + $\mu_{\text{xc}}(\br)$ %V$_\text{H}$ + $\mu_{\text{xc}}$ + $V_{\text{ext}}$.
+		\begin{eqnarray}\nonumber
+			[-\frac{1}{2}\nabla^2+V_{\text{eff}}(\br) ]\psi_{\upsilon\bk}(\br) = \epsilon_{\upsilon\bk} \psi_{\upsilon\bk}(\br)
+		\end{eqnarray}
+		\item For a given the charge density $\rho(\br)$, the total energy per unit cell volume is
+				
+			\begin{eqnarray}\nonumber
+				E &=& E_{\text{kin}} + E_{\text{es}} + E_{\text{xc}}  \\ \nonumber
+				&=& \sum_{v\textbf{k}}n_{v\textbf{k}}\epsilon_{v\textbf{k}}-\int_{\Omega}d^3r~\rho(\br)V_{eff}(\br) +
+				\frac{1}{2}\int_{\Omega}d^3r~\rho(\br)V_{C}(\br)-\frac{1}{2}\sum_{a\in\Omega}Z_aV_M^a(\tau_a) \\&&\nonumber +
+				\int_{\Omega}d^3r\rho(\br)\epsilon_{\text{xc}}(\br)
+			\end{eqnarray}
+		    \begin{enumerate}
+		    	\item[*] $\mu_{\text{xc}}(\br)\stackrel{\text{LDA}}{=}\frac{d}{d\rho}[\rho \epsilon_{\text{xc}}(\br)]$ and for GGA, $\epsilon_{\text{xc}}(\br)$ $\equiv$ $\epsilon_{\text{xc}}(\rho,\nabla \rho)$
+		    \end{enumerate}
+	\end{itemize}	
+	
+}	
+\end{frame}
+}
+
+
+{\nologo
+	\begin{frame}
+		\frametitle{Effect of strain in the total energy}
+		{\small	
+			\begin{itemize}
+				\item A system is in an initial state with the total energy $E_0$ and the volume $\Omega_{0}$.
+				\item An infinitesimal amount of strain $\teps$ is applied, so that it is no longer in its initial state ($E_0$,$\Omega_{0}$).
+				\item Total energy of the deformed system, $E[\teps]$, is expanded around the initial state $E_0$ with a Taylor series expansion.
+				
+%				\begin{eqnarray}\nonumber
+%					E[\teps] = E_0 + \Omega_{0} \sum_{\al,\beta=1}^3 \sig_{\al \beta} \eps_{\al \beta} + \bcancel{ \frac{\Omega_{0}}{2} \sum_{\al, \beta,\gamma, \delta=1}^3 C_{\al \beta \gamma \delta} \eps_{\al \beta}\eps_{\gamma \delta} } +  \bcancel{ \mathcal{O}(\eps^3) }
+%				\end{eqnarray}
+				\begin{eqnarray}\nonumber
+                	E[\teps] = E_0 + \Omega_{0} \sum_{\al,\beta=1}^3 \sig_{\al \beta} \eps_{\al \beta} + \mathcal{O}(\eps^2) 
+                \end{eqnarray}			
+			
+			
+				\item Stress tensor $\sigma_{\al \beta} = \frac{1}{\Omega_0} \frac{\partial E[\teps]}{\partial \eps_{\al \beta}}\Big|_{\teps=0}$
+				
+				\item $ E[\teps] = \sum_{v\textbf{k}}n_{v\textbf{k}}[\teps]\epsilon_{v\textbf{k}}[\teps]-\int_{\Omega[\teps]}d^3r_\epsilon~\rho[\teps](\br[\teps])V_{eff}[\teps](\br[\teps]) +
+				\frac{1}{2}\int_{\Omega[\teps]}d^3r_\epsilon~\rho[\teps](\br[\teps])V_{C}[\teps](\br[\teps])-\frac{1}{2}\sum_{a\in\Omega}Z_aV_M^a[\teps](\tau_a[\teps]) +
+				\int_{\Omega[\teps]}d^3r_\epsilon\rho[\teps](\br[\teps])\epsilon_{xc}[\teps](\br[\teps]) $              
+			\end{itemize}
+		}   	
+	\end{frame}
+}
+
+
+%==========================================================================
+%     Necessary mathematical tools
+%==========================================================================
+\begin{frame}
+	\frametitle{Frequently used mathematical relationship }
+	\begin{itemize}
+		\item Strain derivative of vectors and volume
+		\begin{enumerate}
+			\item[*] A vector $\br$ changes as $\br$ $\rightarrow$ $\br[\teps]$ = $(\Id\pm\teps)\br$; + or - is for the direct or the reciprocal lattice and the unit cell volume changes as {\tiny $\vol\,\rightarrow\,\vol[\teps] = \det(\Id+\teps)\vol$ }.
+			%			\begin{tiny}
+				\begin{eqnarray}\nonumber
+					\frac{d \br[\teps]}{d\eps_{\al \beta}}\Big|_{\teps=0}   &=& \pm \frac{r}{2} ( \wh\br_\al \wh\be_\beta + \wh\br_\beta \wh\be_\al ) 
+					= \pm r\wh{\br}_\alpha \wh{\br}_\beta \\  \nonumber
+					\frac{d \vol[\teps] }{d\eps_{\al \beta}}\Big|_{\teps=0} &=& \delta_{\al\beta} \vol  
+				\end{eqnarray}
+				%			\end{tiny}
+			\item[*] The unit vector component $\wh \br_{\al}$ along Cartesian direction $\al$ can be expanded as $\wh \br_{\al} = \sum_{t=-1}^{1} c_{\al t}Y_{1t}(\hat{\br}) $.
+			\item[*] The product of two spherical harmonics is expanded into Gaunt numbers times another spherical harmonics i.e.
+			$$Y_{1t}(\hat{ \br })Y_{lm}(\hat{ \br }) = \sum_{s,\nu} G_{s,1,l}^{\nu,t,m}  Y_{s,\nu}(\hat{ \br })$$   
+		\end{enumerate}		   
+		\item The gradient component of the spherical harmonics, $\partial_\al Y_{lm}(\hat{\br})$, in the atomic spheres is computed as
+		$$ \partial_\al Y_{lm}(\hat{ \br }) = \frac{1}{r} \sum_{s=\pm 1 } \sum_{t=-1}^{1} c_\al^{st}(l,m) Y_{l+s,m+t}(\hat{ \br }) $$
+		
+	\end{itemize}
+\end{frame}
+
+%==========================================================================
+%     Necessary mathematical tools continue
+%==========================================================================
+\begin{frame}
+	\frametitle{Strain variation of the total integration}
+	\begin{itemize}
+		\item Strain derivative of integrals over the unit cell volume
+		\begin{enumerate}
+			\item A generic integral over the unit cell $\int_{\vol}d^3\br F(\br)$ of an arbitrary function $F(\br)$, which in practice is the charge density times potential or some other real quantity. In stress calculation
+			\begin{tiny}
+				\begin{eqnarray}\nonumber
+					\frac{d}{d\eps_{\al \beta}}\Big|_{\teps=0} \int_{\vol[\teps]}d^3\br_\eps F[\teps](\br_\eps) 
+					= \frac{d}{d\eps_{\al \beta}}\Big|_{\teps=0} \mathtt{det}(\Id+\teps)  \int_{\vol}d^3\br F[\teps](\br[\teps]) 
+					= \delta_{\al\beta} \int_{\vol}d^3\br F(\br) + \int_{\vol}d^3\br \frac{d F[\teps](\br[\teps]) }{ d\eps_{\al \beta} }\Big|_{\teps=0}
+				\end{eqnarray}	
+			\end{tiny}
+			\item \sm{$\frac{d F[\teps](\br[\teps]) }{ d\eps_{\al \beta} }\Big|_{\teps=0}$} depends on $\teps$ explicitly via linear response and implicitly via its smeared argument $\br[\teps]$,
+			\begin{tiny}
+				\begin{eqnarray}\nonumber
+					\frac{d F[\teps](\br[\teps]) }{ d\eps_{\al \beta} }\Big|_{\teps=0} = \frac{d F[\teps](\br) }{ d\eps_{\al \beta} }\Big|_{\teps=0} + \frac{d \br[\teps]}{d\eps_{\al \beta}}\Big|_{\teps=0}\cdot\nabla F(\br)
+				\end{eqnarray}
+			\end{tiny}
+			\item With these relationship, the strain variation of an integral over the unit cell volume becomes
+			\begin{tiny}
+				\begin{eqnarray}\nonumber
+					\frac{d}{d\eps_{\al \beta}}\Big|_{\teps=0} \int_{\vol[\teps]}d^3\br_\eps F[\teps](\br_\eps) = \delta_{\al\beta} \int_{\vol}d^3\br F(\br) 
+					+ \int_{\vol}d^3\br \frac{d F[\teps](\br) }{ d\eps_{\al \beta} }\Big|_{\teps=0} 
+					+ \frac{1}{2}\int_{\vol}d^3\br (r_\beta\partial_\al + r_\al\partial_\beta)  F(\br)
+				\end{eqnarray}
+			\end{tiny}
+		\end{enumerate}
+	\end{itemize}
+\end{frame}
+%==============================================================================
+%Strain DFT energy and stress
+%==============================================================================
+
+%\begin{frame}
+%\frametitle{Strain tensor in DFT}
+%\begin{itemize}
+%%===================testing for figure=================
+%    \begin{columns}
+	%    	\begin{column}{.48\textwidth}
+		%    		\small	
+		%    		\item For strained configuration
+		%    		\begin{eqnarray} \nonumber
+			%    			\br \rightarrow \br[\epsilon]=(1+\epsilon)\br,\qquad \btaua \rightarrow \btaua[\epsilon]=(1+\epsilon)\btaua \\ \nonumber
+			%    			\nabla \rightarrow \nabla[\epsilon]=(1+\epsilon)^{-1}\nabla = (1-\epsilon)\nabla + O(\epsilon^2)\\ \nonumber
+			%    			\Omega \rightarrow \Omega[\epsilon]=det(1+\epsilon)\Omega=(1+tr(\epsilon))\Omega +  O(\epsilon^2)
+			%    		\end{eqnarray}		
+		%    		\normalsize
+		%    	\end{column}
+	%         \begin{column}{.3\textwidth}
+		%         		\includegraphics[width=\textwidth]{pdf/unit_cell_new.jpg}
+		%         \end{column}
+	%    \end{columns}
+%   \item Back transformation of the volume integration 
+%
+%    \begin{eqnarray} \nonumber
+	%    	\int_{\Omega[\eps]}d^3r_\eps \rightarrow \det(1+\eps) \int_{\Omega}d^3r
+	%    \end{eqnarray}
+%    \item We need to calculate $\frac{1}{\Omega}$$\frac{dE[\epsilon]}{d\epsilon_{\alpha \beta}}\Big|_{\epsilon=0}$, where
+%    {\small 
+	%	\begin{eqnarray}  \nonumber
+		%		E[\epsilon]&=&\sum_{v\bk[\epsilon]}n_{v\bk[\epsilon]}\epsilon_{v\bk[\epsilon]}-\int_{\OmE}d^3r_\epsilon~V_{eff}[\epsilon](\br_\epsilon)\rho[\epsilon](\br_\epsilon)  
+		%		+\frac{1}{2}\int_{\OmE}d^3r_\epsilon \rho[\epsilon](\br_\epsilon)V_C[\epsilon](\br_\epsilon) \\&&   \nonumber
+		%		-\frac{1}{2}\sum_{a\in\Omega}Z_aV_M[\epsilon](\btaua[\epsilon])  
+		%		+ \int_{\OmE}d^3r_\epsilon\rho[\epsilon](\br_\epsilon)\epsilon_{xc}[\epsilon](\rho(\br_\epsilon))
+		%	\end{eqnarray}
+	%} 
+%\end{itemize}
+%\end{frame}
+
+%===============================================================================================
+%CONTRIBUTIONS OF THE STRESS TENSOR IN LAPW
+%===============================================================================================
+
+\begin{frame}
+	\frametitle{ Total stress tensor in the APW based methods}
+	\vspace{0.01cm}
+	
+	\color{blue}{
+		\begin{eqnarray} \nonumber
+			\sig_{\al\beta} &=& \frac{1}{\Omega} \frac{d E[\teps]}{ d \epsilon_{\alpha \beta} } \Big|_{\teps = 0} \\ \nonumber
+			&=& \sig_{\al\beta}^{val, kin} + \delta_{APW}\sig_{\al\beta}^{APW} + \sig_{\al\beta}^{val,corr} + \sig_{\al\beta}^{core,corr} + \sig_{\al\beta}^{es} + \sig_{\al\beta}^{xc}
+	\end{eqnarray} }
+	
+	\tiny{
+		\begin{itemize}
+			\item $\sigma_{\alpha\beta}^{val,kin}$   =  $\frac{1}{2}\sum_{\upsilon \textbf{k}} n_{\upsilon \textbf{k}} \int_{\Omega}d^3\textbf{r} \psi_{\upsilon\textbf{k}}^*(\textbf{r}) \Big( \partial_\alpha \partial_\beta + \partial_\beta \partial_\alpha  \Big) \psi_{\upsilon\textbf{k}}(\textbf{r})$
+			\item $\sig_{\al\beta}^{APW}$    = $\frac{1}{\Omega}\oint dS\frac{d}{d\epsilon_{\alpha \beta}} \Big( \psi^{*~a}_{\upsilon\bk}[\teps] \frac{\partial \psi^{a}_{\upsilon\bk}[\teps]}{\partial r_a}-\psi^{*~IS}_{\upsilon\bk}[\teps]\frac{\partial \psi^{IS}_{\upsilon\bk}[\teps]}{\partial r_a} \Big)$
+			\item $\sigma_{\alpha\beta}^{val,corr}$  =  $	\frac{2}{\Omega}\sum_{v\bk}n_{v\bk}\Re\Big<\frac{d\psi_{v\bk[\teps]}[\teps](\br[\teps])}{d\eps_{\al\beta}}\Bigg{|}_{\teps=0}|\widehat{H}_{eff}(\br)-\eps_{v\bk}|\psi_{v\bk}(\br)\Big>$
+			\item $\sigma_{\alpha\beta}^{core,corr}$ =  $-\frac{1}{2\Omega} \sum_{a\in \Omega} \int_{{R_a}} d^3r_a \rho_c^a(\textbf{r}_a) \Big( \textbf{r}_{a\alpha} \partial_\beta  + \textbf{r}_{a\beta} \partial_\alpha   \Big) V_{eff}^a(\textbf{r}_a)$      
+			\item $\sigma_{\alpha\beta}^{es}$       =   $- \frac{\delta_{\alpha \beta}}{\Omega} \int_\Omega d^3\textbf{r} \rho(\textbf{r}) V_{C}(\textbf{r}) + \frac{1}{2\Omega}\frac{d}{d \eps_{\al\beta}}\Bigg|_{\teps=0}\int_{\Omega[\teps]} d^3\br_\eps \rho((\Id-\teps)\br_\eps)V_C[\teps](\br_\eps) - 
+			\frac{1}{2\Omega}\sum\limits_{a\in\Omega}Z_a\frac{d }{d\eps_{\al\beta}}\Bigg|_{\teps=0}V^a_M[\teps](\btau_a[\teps])$
+			\item $\sigma_{\alpha\beta}^{xc}$        = $ \frac{\delta_{\alpha \beta}}{\Omega}  \int_{\Omega} d^3\br \rho(\textbf{r}) \Big( \epsilon_{\text{xc}}(\rho(\textbf{r})) - \mu_{\text{xc}}(\rho(\textbf{r}))  \Big)
+			- \frac{2\delta_{GGA}}{\Omega} \int_\Omega d^3\br \rho(\textbf{r}) \partial_\alpha \rho(\textbf{r}) \partial_\beta \rho(\textbf{r}) \frac{\partial \epsilon_{\text{xc}}}{\partial \sigma} $
+		\end{itemize}
+	}
+	
+\end{frame}
+
+
+%\begin{frame}
+%	\frametitle{Final formulas implemented in WIEN2k code}
+%     \begin{figure}
+	%	\includegraphics[width=13cm,height=20cm]{final_formulas.pdf}
+	%     \end{figure}
+%\end{frame}
+
+
+%===============================================================================================
+% DISCRIPTION OF THE HELLMANN-FEYNMAN THEOREM
+%================================================================================================
+
+
+
+
+
+
+
+
+%\begin{frame}
+%\frametitle{Simple Pressure}
+%Direct calculation of trace of stress gives the so-called \textbf{simple pressure formula} 
+%$\Rightarrow$
+%$$ -3P \Omega = \sum_{\alpha = \beta}\sigma_{\alpha \beta} $$
+%
+%% $$-3P\Omega &=&  \sum_{\alpha = \beta}\sigma_{\alpha \beta}$$  !putting & on either side of the equal bracket inside this $$ $$
+%                                                                 % would complaint during the compile
+%
+% \begin{eqnarray}\nonumber
+	% 3P\Omega &=& 2E^{kin}+E^{pot}-3\int_\Omega d^3r\rho(\br)(\epsilon_{xc}(\br)-\mu_{xc}(\br))-\Omega\sum_{\alpha=1}^3\sigma_{\alpha \alpha}^{val,corr}  \\ \nonumber
+	%    &=& E^{tot}+E^{kin}-3\int_\Omega d^3r\rho(\br)(\epsilon_{xc}(\br)-\mu_{xc}(\br))-\Omega\sum_{\alpha=1}^3\sigma_{\alpha \alpha}^{val,corr}
+	% \end{eqnarray}
+%{\small
+	%\begin{itemize}
+	%	\item  Janak's identity[1] is used to convert the core correction stress tensor to the core kinetic energy.
+	%	\begin{enumerate}
+		%		\item This identity proven to be invalid if the system has core leakage.
+		%	\end{enumerate}
+	%\end{itemize}
+	%}
+%
+%{\tiny
+	%\begin{itemize}	
+	%	\item [1] J. F. Janak, Phys. Rev. B \textbf{9}, 3985 (1974).     
+	%\end{itemize} }
+	%
+	%\end{frame}
+	
+	
+	%\begin{frame}
+	%	\frametitle{Core leakage problem and its solutions}
+	%The old (red curve) and new extrapolated potential (blue curve) outside an atomic sphere.
+	%     \begin{figure}
+		%     	 		\includegraphics[width=8cm,height=4cm]{pdf/Al_rkmax10_V00_extra_no_extra.pdf}
+		%     \end{figure}
+	%
+	%\end{frame}
+	%================================================================================================
+	%Examples goes here
+	%================================================================================================
+%\begin{frame}
+%	\frametitle{Results}
+%	Numerical results in the APW based methods depend on
+%	\begin{itemize}
+%		\item Size of the basis function  $R_{a}K_{max}$.
+%		\item The cutoff value $G_{max}$ for the charge densities and the potential.
+%		\item The cutoff value $L_{max}^{ns}$ for the expansion of the non-spherical potential.
+%		\item In metallic systems, in the choice of the smearing method.
+%	\end{itemize}
+%	
+%\end{frame}	
+	
+	
+	
+	
+	\begin{frame}
+		\frametitle{Results}
+		\begin{itemize}
+			\item The results of the stress tensor are compared with the least square fit of total energy vs volume using the Birch-Murnaghan (BM) equation of state.
+			\begin{small}
+			\begin{eqnarray}\nonumber
+				E_{BM}(\Om) = E_0 + \frac{9\Om_0B_0}{16} \Bigg( \Big[ \Big(\frac{\Om}{\Om_0} \Big)^\frac{2}{3}-1 \Big]^3 B_0^\prime + \Big[ \Big(\frac{\Om}{\Om_0} \Big)^\frac{2}{3}-1 \Big]^2 \Big[6- 4\Big(\frac{\Om}{\Om_0}\Big)^\frac{2}{3} \Big]
+				\Bigg)
+			\end{eqnarray}
+		    \end{small}
+			\item With $E_{BM}(\Om)$ we define the numerical pressure $P^{(E)}$
+			\begin{small}
+				\begin{eqnarray}\nonumber
+					P^{(E)}(\Om) &=& -\frac{\partial E_{BM}(\Om)}{\partial \Om}  			
+				\end{eqnarray}
+			\end{small}
+			\item $P^{(E)}(\Om)$ is compared to one third of the negative trace of the full stress tensor $P^{(\sig)}(\Om)$
+            \begin{small}
+            	  \begin{eqnarray}\nonumber
+            		P^{(\sig)}(\Om) = -\frac{1}{3} \sum_{\al} \sigma_{\alpha \alpha}= -\frac{1}{3} \Big( \sigma_{11} + \sigma_{22}+ \sigma_{33} \Big). 
+            	\end{eqnarray}
+            \end{small} 
+             \item The difference $P^{(E)}(\Om)$ - $P^{(\sig)}(\Om)$ gives the accuracy of our stress tensor formalism. 
+		\end{itemize}
+		
+	\end{frame}		
+		
+		%================================================================================================
+		%Examples W
+		%================================================================================================
+		{\nologo
+		\begin{frame}
+			\frametitle{ Convergence of the trace of $\sigma_{\alpha\beta}$ with $R_aK_{max}$ for W}
+		  \begin{small}	
+		  	 \begin{itemize}
+		  	 	\item (\textbf{a}) Energy-Volume curve as well as $P^{(E)}$, 
+		  	 	(\textbf{b}) $P^{(\sig)}$ and (\textbf{c}) and (\textbf{d}) are $P^{(E)}$-$P^{(\sig)}$
+		  	 \end{itemize}		  	
+			\begin{figure}
+				{\tiny{\textbf{Fermi-Dirac method}} \hspace{2.5cm}  {\textbf{Fermi-Dirac method}} \hspace{3.0cm} {} } \par 
+				\includegraphics[width=3.5cm,height=3.8cm]{pdf/RKmax_ene_vs_vol_W_temp0p005.pdf} \hfil
+				\includegraphics[width=3.5cm,height=3.8cm]{pdf/RKmax_con_W_APW_TEMP_presentation.pdf} \hfil
+%				\includegraphics[width=3.5cm,height=3.8cm]{pdf/RKmax_con_W_APW_TEMP.pdf} \hfil 			
+%            	\includegraphics[width=3.5cm,height=4.cm]{pdf/RKmax_con_W_APW_TETRA_single.pdf}						
+                 \includegraphics[width=3.5cm,height=4.cm]{pdf/comparison_tetra_temp_with_label.pdf}
+			\end{figure}		    			 
+		    	 \begin{itemize}		    				    		
+%		    		\item input parameters: $G_{max} = 20 Ry^{\frac{1}{2}}$, k-mesh = (21$\times$21$\times$21), FFT grid = (72$\times$72$\times$72), $\epsilon_{\text{xc}}$ and $\mu_{\text{xc}}$ are calculated according to the PBE GGA, $R_a$ = 2.47 Bohr, and the basis set are defined according to the APW+lo method.
+		    		
+		    		\item $P^{(E)} - P^{(\sig)}$ exhibits the same behavior in the tetrahedron method (\textbf{d}) as in the FD method (\textbf{c}).		     	
+		    	\end{itemize}
+		    \end{small}
+		\end{frame}
+	}
+		
+%===============================================================
+% COmparison between results for W and Al
+%===============================================================
+{\nologo	
+	    \begin{frame}
+	    	\frametitle{Stress tensor with the FD and tetrahedron method.}
+	    	\begin{small}
+	    	\begin{figure}
+	    		\textbf{W} \hspace{5cm}	\textbf{Al}  \par \medskip
+	    		\includegraphics[width=4.0cm,height=4.0cm]{pdf/RKmax_con_W_APW_TEMP_TETRA_COMPARISON.pdf} \hfil
+	    		\includegraphics[width=4.0cm,height=4.0cm]{pdf/RKmax_con_Al_APW_TEMP_TETRA_COMPARISON.pdf} 
+	    	\end{figure}
+	    	
+	    	\begin{itemize}
+	    		\item Left panel: for W, $P^{(E)}$ - $P^{(\sig)}$ for the FD and tetrahedron method is in the same order. With $R_{a}K_{max}$ = \red{10} , $a_0$ = \red{6.143} ($\sig$, FD), \red{6.143} (E, FD), \red{6.145} ($\sig$, Tetra) and \red{6.144} (E, Tetra).
+	    		
+%	    		\item With $R_{a}K_{max}$ = \blue{7}, $a_0$ = \blue{6.162} ($\sig$, FD), \blue{6.136} (E, FD), \blue{6.164} ($\sig$, Tetra) and \blue{6.135} (E, Tetra). 
+	    		
+	    		\item Right panel: for Al, $P^{(E)}$ - $P^{(\sig)}$ is larger in the tetrahedron method than in the FD method. With $R_{a}K_{max}$ = \red{10}, $a_0$ = \red{7.633} ($\sig$, FD), \red{7.634} (E, FD), \red{7.626} ($\sig$, Tetra) and \red{7.635} (E, Tetra).
+	    		
+%	    		\item With $R_{a}K_{max}$ = \blue{7}, $a_0$ = \blue{7.630} ($\sig$, FD), \blue{7.635} (E, FD), \blue{7.624} ($\sig$, Tetra) and \blue{7.635} (E, Tetra). 
+	    	\end{itemize}
+    		    	
+%	    	{\color{red} compared the temperature and tetra method between aluminum and W }
+%	    	 \begin{tiny}
+%	    		\begin{tabular}{c c c c c}
+%	    			\hline\hline
+%	    			$R_{a}K_{max}$ & $a_0^{(\sig)}$(FD) & $a_0^{(E)}$(FD) & $a_0^{(\sig)}$(Tetra)   & $a_0^{(E)}$(Tetra)\\[0.5ex]
+%	    			\hline
+%	    			7              & 6.162 & 6.136 & 6.164  &  6.135 \\[1ex]
+%	    			8              & 6.145 & 6.139 & 6.146  &  6.140  \\[1ex]
+%	    			9              & 6.142 & 6.143 & 6.144  &  6.143   \\[1ex]
+%	    			10             & 6.143 & 6.143 & 6.145  &  6.144   \\[1ex]
+%	    			\hline\hline
+%	    		\end{tabular}   
+%	    	\end{tiny} 
+    	
+    	
+	    	\end{small}	     	   	
+	    \end{frame}
+}	    
+%===================================================================
+%  results for different k-meshes 
+%===================================================================
+%		{\nologo
+%			\begin{frame}
+%				\frametitle{Convergence with respect to k meshes for W}
+%		\begin{small}
+%			 
+%			
+%%				\begin{minipage}{0.5\textwidth}
+%	              \begin{figure}
+%	              		\includegraphics[width=5.0cm,height=6.5cm]{pdf/kmesh_tetra_temp5_compare.pdf}     
+%	              \end{figure}					
+%                    \begin{itemize}
+%%                    	\item Convergence of $\sigma_{\alpha\beta}$ with k points for W.
+%                    	\item For the FD method, no significant dependence of $\sigma_{\alpha\beta}$ on the chosen k meshes
+%                    	\item In the case of the tetrahedron method, the dependency is somewhat larger and has a relatively strong volume dependency.
+%                    	\item $a_0(FD)$ = 6.143 Bohr for (12$\times$12$\times$12) and (21$\times$21$\times$21). $a_0(Tetra)$ = 6.147 Bohr for (12$\times$12$\times$12) and 6.145 Bohr for (21$\times$21$\times$21)
+%                    \end{itemize}   					
+%%				\end{minipage}%
+%		   
+%	      \end{small}		
+%			\end{frame}
+%		}
+		
+%=========================================================================
+%    Frame dedicated to the surface term in the APW+lo method.		
+%=========================================================================		
+		{\nologo
+			\begin{frame}	
+				\frametitle{Importance of the surface term in APW+lo}
+				\begin{small}					
+					In the APW+lo method
+					\begin{itemize}
+						\item Basis functions are continuous but not the slope.
+						\begin{enumerate}
+							\item[*] This gives an additional surface term in the kinetic energy when calculating the total energy. {\tiny{ $ \cal S $ =  $ \oint dS \Big( \psi^{*~a}_{\upsilon\bk} \frac{\partial \psi^{a}_{\upsilon\bk}}{\partial r_a}-\psi^{*~IS}_{\upsilon\bk}\frac{\partial \psi^{IS}_{\upsilon\bk}}{\partial r_a} \Big)$  } }
+							\normalfont
+							\item[*] In stress calculation, $ \cal S $ is defined in the deformed system and differentiated with respect to strain.				
+							\tiny {$\sig_{\al\beta}^{APW}$    = $\frac{1}{\Omega}\oint dS\frac{d}{d\epsilon_{\alpha \beta}} \Big( \psi^{*~a}_{\upsilon\bk}[\teps] \frac{\partial \psi^{a}_{\upsilon\bk}[\teps]}{\partial r_a}-\psi^{*~IS}_{\upsilon\bk}[\teps]\frac{\partial \psi^{IS}_{\upsilon\bk}[\teps]}{\partial r_a} \Big)$ }
+						\end{enumerate}
+					\end{itemize}
+
+					\begin{figure}
+						\includegraphics[width=4.5cm,height=4.5cm]{pdf/rmax10_surface_no_surface_W_APW_TEMP.pdf} 
+					\end{figure}
+				    \begin{itemize}
+				    	\item $\sigma^{APW}_{11}$ for APW+lo $\sim$ -38 kbar and for LAPW = 0 kbar.
+				    	$a_0^{(E)}$ = 6.143 Bohr, $a_0^{(\sigma)}$ = 6.143 Bohr (red curve) and 6.174 Bohr (blue curve)							    	
+				    \end{itemize}
+			  \end{small}
+			\end{frame}
+		}
+		
+%=========================================================================
+%    Frame dedicated to a comparison of LDA and GGA
+%=========================================================================		
+	
+{\nologo		
+\begin{frame}
+	\frametitle{Comparison between LDA and GGA for W}
+		\begin{minipage}{0.5\textwidth}
+		\begin{figure}
+			\includegraphics[width=4.0cm,height=3.8cm]{pdf/Comparison_LDA_GGA_EOS.pdf}
+			\includegraphics[width=4.5cm,height=3.8cm]{pdf/Comparison_LDA_GGA_PRESSURE.pdf}	
+		\end{figure}
+	     \vspace{-0.4cm}
+	    \begin{tiny}
+	    	\begin{itemize}
+	    		\item Difference between $P^{(E)}$ and $P^{(\sig)}$ is just 1-2 kbar.
+	    		\item $P^{(E)}$ - $P^{(\sig)}$ is smaller for GGA than LDA.
+	    		\item $a_0^{(\sig)}$ = $a_0^{(E)}$ for LDA and GGA up to three decimal place.
+	    	\end{itemize}
+	    \end{tiny}
+		\end{minipage}%	%minipage end 
+    	\begin{minipage}{0.5\textwidth}
+%    		\vspace{0.2cm}             
+            The additional GGA contribution is \hspace{0.5cm}
+    		{\tiny 
+    			$\sigma_{\alpha\beta}^{xc, GGA}$ = $ - \frac{2\delta_{GGA}}{\Omega} \int_\Omega d^3r \rho(\textbf{r}) \partial_\alpha \rho(\textbf{r}) \partial_\beta \rho(\textbf{r}) \frac{\partial \epsilon_{XC}}{\partial \sigma} $
+    		}
+    		\begin{figure}
+    			\includegraphics[width=4.5cm,height=4cm]{pdf/different_GGA_contributions.pdf}		
+    		\end{figure}
+    	    \vspace{-0.5cm}
+    	    \begin{small}
+    	    	\begin{itemize}
+    	    		\item $P_{tot}^{(xc,GGA)}$ is negative trace of $\sigma_{\alpha\beta}^{xc, GGA}$.
+    	    		\item $P_{tot}^{(xc,GGA)}$ = $P_{R_a}^{(xc,GGA)}$ + $P_{IS}^{(xc,GGA)}$
+    	    		\item $R_a$ and $IS$ denote the atomic sphere and the interstitial region.    	    		    	    		 		
+    	    		\item $P_{R_a}^{(xc,GGA)}$ is the major constituent and $P_{IS}^{(xc,GGA)}$ is within the error limit of the calculation.
+    	    	\end{itemize}
+                \hspace{1cm}
+        	    {\tiny J.\ Phys.\ Soc.\ Jap.\ \textbf{82}, 044701 (2013). }
+    	    \end{small}
+	   \end{minipage}
+\end{frame}
+}		
+		
+%=========================================================================
+%    COmparison LAPW and APW+lo
+%=========================================================================	
+{\nologo	
+\begin{frame}
+	\frametitle{Comparison of convergences in APW+lo and LAPW}	
+	    \begin{itemize}
+	    	\item Convergence of $\sigma_{11}$ (left panel) and the lattice parameter (right panel) with basis set size ($R_aK_{max}$) for W.
+	    \end{itemize}			
+		\begin{figure}
+			\includegraphics[width=5.0cm,height=4.0cm]{pdf/Convergence_Sigma11_APW_vs_LAPW_no_f.pdf} \hfil
+			\includegraphics[width=5.0cm,height=4.0cm]{pdf/Convergence_lattice_APW_vs_LAPW_no_f.pdf} 
+		\end{figure}
+	    \begin{small}
+	    	\begin{itemize}
+%	    		\item Figures show results for three different calculations: APW+lo, LAPW with 4f electron as valence electrons and as core electrons. 
+	    		\item With APW+lo $R_aK_{max}$ = 8 already gives an acceptable result, but for LAPW $R_aK_{max}$ = 10 or more is required.
+	    		\item Both the stress tensor and the lattice parameter in the APW+lo method converge much faster than two different LAPW cases.
+	    	\end{itemize}
+	    \end{small}
+\end{frame}		
+}		
+%=========================================================================
+%    Different contributions in the stress tensor
+%=========================================================================		
+		
+		{\nologo
+			\begin{frame}
+				\frametitle{ Individual contributions of the stress tensor }
+				
+				\begin{itemize}
+					\item Stress tensor
+					
+					\begin{eqnarray}\nonumber
+						\sig_{\al\beta} =	\sig_{\al\beta}^{val, kin} + \delta_{APW}\sig_{\al\beta}^{APW} + \sig_{\al\beta}^{val,corr} + \sig_{\al\beta}^{core,corr} + \sig_{\al\beta}^{es} + \sig_{\al\beta}^{xc}
+					\end{eqnarray}
+					
+					\item $\sigma_{11}$ component of various stress tensor contributions at $\Omega$ = 115.94 $Bohr^3$.
+					\begin{table}	
+						\begin{tabular}{c c c}
+							\hline\hline
+							stress                      & APW+lo (kbar)     & LAPW (kbar)  \\[0.5ex]
+							\hline
+							${\color{red}\sigma^{val,kin}_{11}}$     &  {\color{red}1102905.56}      & {\color{red}1102971.88} \\[1ex]
+							
+							$\sigma^{APW}_{11}$         &  -37.96          & 0.00 \\[1ex]
+							
+							$\sigma^{val,corr}_{11}$    &  45.09           & 20.50 \\[1ex]
+							
+							${\color{red}\sigma^{core,corr}_{11}}$   & {\color{red} 24760504.93}      & {\color{red} 24760437.09}  \\[1ex]
+							
+							${\color{red}\sigma^{es}_{11}}$          & {\color{red}-25607153.70}     & {\color{red}-25607170.14} \\[1ex]
+							
+							$\sigma^{xc, LDA}_{11}$     & -241699.29       &  -241699.56 \\[1ex]
+							
+							$\sigma^{GGA,corr}_{11}$    & -14564.88        & -14564.78 \\[1ex]	 		
+							
+							{\color{blue} total}        &  {\color{blue} -0.25}   & {\color{blue} -5.01}     \\
+							\hline\hline
+						\end{tabular}
+					\end{table}
+					\item Conversion from the $energy\ per\ unit\ volume$ to $kbar$ for the given volume $\Omega$ is achieved by 1$\frac{Ry}{Bohr^3}$ = 147105.16 kbar.
+					
+				\end{itemize}	     
+			\end{frame}
+		}
+		
+%================================================================================================
+%Results of TiO2
+%================================================================================================		
+		
+		{\nologo
+			\begin{frame}
+				\frametitle{Importance of non-spherical potential in core correction}
+			\begin{small}				
+				\begin{itemize}
+					\item Core correction stress tensor 
+					\begin{eqnarray}
+						\sigma_{\alpha\beta}^{core,corr} =  -\frac{1}{\Omega} \sum_{a\in \Omega} \int_{{R_a}} d^3r_a \rho_c^a(\textbf{r}_a) \frac{1}{2} ( \textbf{r}_{a\alpha} \partial_\beta  + \textbf{r}_{a\beta} \partial_\alpha   ) V_{eff}^a(\textbf{r}_a)
+					\end{eqnarray}
+					\item $V^a_{eff}$ $\equiv$ $V_{tot}^{c}$ = $V_{00}^{c}$ + $V_{2m}^{c}$
+					\item $V_{2m}^{c}$ is missing in Thonhauser \textit{et al.} (2002)
+					\item Effects due to the non-spherical component (\textcolor{red}{l=2}) in the potential exist only in non-cubic crystal structure.
+					\item For the stress tensor, its importance is confirmed with results for anatase TiO$_2$ in body center tetragonal structure.
+					
+%					\item In TiO2 structure has 6 atoms (2 Ti and 4 O) in the unit cell.
+%					\item All states up to 2p for Ti and for O the 1s state are considered as core states. The valence states 3p, 3d and 4s of Ti and 2p of O are described by the APW+lo basis functions.
+%					\item The 3s states of Ti and 2s states of O are described via local orbitals (LO).
+%					\item The sphere sizes of Ti and O are 1.66 and 1.49 Bohr, respectively. $R_{a}K_{max}$ = 8.5, k points grid of 6$\times$6$\times$10, $G_{max}$ = 20 Ry$^\frac{1}{2}$ and $L^{ns}_{max}$ = 6. The exchange correlation energy and potential are calculated using PBE GGA and FFT grid of 108$\times$108$\times$60 is used.
+					
+					\begin{table}
+						\begin{tabular}{c c c}
+							\hline \hline
+							& $a_0$ (Bohr) & $c_0$ (Bohr)    \\[0.5ex]
+							\hline
+							energy & 7.181 & 18.309  \\[1ex]
+							
+							stress with $V_{tot}^{c}$ & 7.181 & 18.307  \\ [1ex]
+							
+							stress with $V_{00}^{c}$  & 7.163 & 18.404  \\ [1ex]
+							\hline \hline
+						\end{tabular}
+					\end{table}
+                    \item The symmetry between the equivalent 
+                    atoms has been addressed correctly and the code works also for a non-symmorphic space group.
+				\end{itemize}
+			 \end{small}		
+			\end{frame}
+		}
+	
+\begin{frame}
+	\frametitle{Accuracy of individual components of the stress tensor}
+	\begin{itemize}
+		\item Cubic silicon in the diamond structure at the equilibrium volume \\ (pressure = 0 and $a_0$ = 10.209 Bohr).
+		\item Lattice parameters $a_0$ and $b_0$ = $a_0$ = 10.209 Bohr are fixed but only $c_0$ lattice parameter varies such that c = $c_0$(1+$\eps_{33}$).
+		\item Using a family of tetragonal deformations without volume conserving, the stress component $\sigma_{33}^{(E)}$ is calculated using $\sigma_{33}^{(E)} = \frac{1}{\Omega_0} \frac{\partial E(\eps_{33}) }{\partial \eps_{33}}$ with $\eps_{33}$ = $\frac{c}{c_0}$ - 1 and compared with $\sigma_{33}^{(\sigma)} $
+\begin{table}
+	\begin{center}		
+		\begin{tabular}{ccc}
+			\hline\hline			
+			$\eps_{33}$ & $\sig_{33}^{(E)}$ &  $\sig_{33}^{(\sig)}$   \\
+			\hline
+			-0.020  & 33.12 &  34.28 \\		 
+			-0.013 & 21.95  & 22.63 \\
+			-0.007 & 10.90  & 11.17  \\
+			0.000 & 0.00   & 0.00  \\
+			0.007 & -10.74  & -10.99  \\
+			0.013  & -21.29  & -21.70 \\   
+			0.020  & -31.65 & -32.16 \\		 
+			\hline\hline
+		\end{tabular}
+	\end{center}
+\end{table}
+		
+	\end{itemize}
+\end{frame}	
+	
+\begin{frame}
+	\frametitle{Discussion and Outlook}
+	\begin{itemize}
+		\item Stress tensor formalism for LAPW, APW+lo, LDA and GGA has been derived  and implemented in the WIEN2k code.
+		\item Stress tensor is accurate enough to be used for structure optimization.
+		\item A bit larger basis set for stress calculations is needed than for total energy calculations.
+		\item With APW+lo compared to LAPW, the stress tensor converges faster and requires a smaller value of $R_aK_{max}$.
+		\item For metallic systems, calculations using the FD method converge faster 
+%		and require a smaller k-mesh as compared to the tetrahedron method.
+		\item Formalism and the implementation needs to be extended to the scalar relativistic kinetic energy and spin-orbit coupling.
+		\item An automatic optimization of the lattice parameter using the stress tensor can be implemented in a similar way as the automatic optimization with force (L. D. Marks J. Chem. Theory Comput. (2021)).
+	\end{itemize}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Acknowledgment}
+	\small{
+	\begin{itemize}
+		\item I would like to express my sincere gratitude to my supervisors, Prof. Peter Blaha and Dr. Andreas Tr$\ddot{o}$ster for the continuous support	and guidance throughout my PhD study and research. 		
+		\item I would like to thank Dr. Fabien Tran %for his friendship and presence in times of need.
+		\item I would also like to thank Prof. Georg Madsen and Prof. Josef Redinger  for agreeing to review my thesis.
+		\item I thank all of my colleagues.
+		\item I acknowledge support by the Austrian Science Fund (FWF) Project P27738-N28 and WIEN2k.
+	\end{itemize}	
+    }
+	\begin{center}
+	\begin{tcolorbox}[colframe=red!75!black, colback=black!10, width=\linewidth/2]
+		\begin{center}
+			\Huge Thank you
+		\end{center}	
+	\end{tcolorbox}
+    \end{center}
+\end{frame}
+	
+
+\begin{frame}
+	\frametitle{Non linear eigenvalue problem in the APW method}
+	\begin{figure}
+		\includegraphics[width=5.0cm,height=4.0cm]{pdf/Hamiltonian_APW.pdf} 
+	\end{figure}
+
+
+{\tiny }
+\end{frame}
+	
+\begin{frame}
+	\frametitle{Why the Fermi-Dirac smearing method is better for calculating stresses}
+\small{	
+	\begin{itemize}
+		\item For a system with partial occupation, the total energy discussed above is no longer variational. In such a case, the total energy must be replaced by a more general expression as given in Eq.~ (\ref{entropy_11}). This argument is based on the force calculation and we assume that the same argument is valid for the stress tensor calculation.
+		\begin{eqnarray}\label{entropy_11}
+			F = E - \sum_{vk}n_{vk}\sigma S
+		\end{eqnarray}
+	    \item The derivative of the occupation number with respect to strain will be canceled with a similar expression from the entropy-like term (second term in Eq. (\ref{entropy_11})).
+	\end{itemize}
+}
+\end{frame}
+
+
+\small{
+	\begin{frame}
+		\frametitle{Linearization in the LAPW method}
+		\begin{itemize}
+				\item Energy dependent radial function $u_l(r,E)$ of APW is expanded in LAPW.
+				\begin{eqnarray}\nonumber
+					u_l(r,E) &=& u_l(r,E_l^a + (E-E_l^a)) \\ \nonumber
+					         &=& u_l(r,E_l^a) + (E-E_l^a)\dot{u}_l(r,E_l^a) + \mathcal{O}((E-E_l^a)^2)
+				\end{eqnarray}
+			    \item All higher order terms are neglected by assuming that the difference $E-E_l^a$ is very small.
+			    \item Linearization scheme of LAPW is able to solve the non-linear eigenvalue problem of APW but optimal shape of the basis function inside the atomic spheres is sacrificed. 
+			\end{itemize}
+	\end{frame}	
+	}
+
+
+%===================                               ========================
+%===================The total wave function in the LAPW method=============
+%===================                               ========================
+
+{\nologo
+		\begin{frame}
+				\frametitle{Total wave function and charge density}
+		\small{		
+					\begin{itemize}
+							\item The linear combination of the basis functions $\phi_{\textbf{kK}}(\br)$ are used to define the total wave function $\psi_{v\bk}(\br)$ for the band $v$ and given $\bk$ vector
+							\begin{eqnarray}\nonumber
+									\psi_{v\bk}(\br) &=& \sum_{\bK} c_{v\bk\bK} \phi^{(L)APW}_{\bk\bK}(\br) + \sum_{lo} c_{v\bk,lo} \phi_{lo}^a(\br) + \sum_{LO} c_{v\bk,LO} \phi_{LO}^a(\br)
+					%				\psi_{v\textbf{k}}(\textbf{r}) &=& \sum_{\textbf{K}} c_{v\textbf{k}\textbf{K}} \phi_{\bk\bK}(\br),
+								\end{eqnarray}
+							\item $c_{v\bk\bK}$ are expansion coefficients and $\bK$ is the reciprocal lattice vector such that $|\bK| \le K_{\text{max}}$.
+							\item $\psi_{v\bk}(\br)$ are used to define the charge density as 
+							$$\rho(\br) = \sum_{v\bk}n_{v\bk} 	\psi_{v\bk}^{*}(\br) \psi_{v\bk}(\br)$$
+							\item After simplification, $\rho(\br)$ in the APW based methods can be expressed as follow
+							\begin{eqnarray}\nonumber
+									\rho(\br) = \begin{cases}
+											\sum_{\bG}^{G_{\text{max}}} \rho(\bG) e^{i\bG.\br}    & \br \in IR   \\
+											\sum_{\text{LM}} \rho_{\text{LM}}(r) Y_{\text{LM}}(\hat{\br}_a)   & \br \in R_a, 		   
+										\end{cases}
+								\end{eqnarray}
+							\item $G_{\text{max}}$ must be at least 2$K_{\text{max}}$. The total potential $V(\br)$ is expanded similar to $\rho(\br)$.
+						\end{itemize}
+			}	
+			\end{frame}
+	}
+
+%=====================END of the Presentation============================
+\end{document}
+%========================================================================	
+	
+		%================================================================================================
+        %Simplre pressure formula
+        %================================================================================================	
+{\nologo
+\begin{frame}
+	\frametitle{Simple pressure formula}
+	\begin{small}
+		\begin{itemize}
+			\item $P$ = -$\frac{1}{3}\sum_\alpha \sigma_{\alpha \alpha}$
+			\item For the LDA and LAPW method 
+			\begin{enumerate}
+				\item[*] $P_{LDA} = P_{val,corr}+P_{val,kin} +  P_{core} + P^{es} + P^{xc,LDA}$ \\
+				\item[]  \hspace{0.6cm} $= P_{val,corr}+\frac{2}{3\Om} E_{kin}^{val} +  \frac{2}{3\Om} E_{kin}^{core} + P^{es} + P^{xc,LDA}$    
+				                           
+			\end{enumerate} 
+		\end{itemize}
+	    \begin{figure}
+	    	\includegraphics[width=5.0cm,height=4.0cm]{pdf/simp_Rmt_dependency_LAPW_no_extpole.pdf} \hfil
+	    	\includegraphics[width=5.0cm,height=4.0cm]{pdf/Fittp_Rmt_dependency_LAPW_no_extpole.pdf} 
+	    \end{figure}
+        \begin{itemize}
+        	\item {\color{americanrose} Left panel: } pressure is calculated according to the above formula and depends on the choice of the size of the atomic sphere. {\tiny $a_0^{(\sig)}$ = 7.508 ($R_a$ = 2.1 Bohr), 7.520 ($R_a$ = 2.3 Bohr) and 7.522 ($R_a$ = 2.5 Bohr)}. 
+        	\item {\color{aoGreen} Left panel: } pressure calculated directly from the total energy and independent of the choice of the atmosphere. 
+%        	{\tiny $a_0^{(E)}$ = 7.531 ($R_a$ = 2.1 Bohr), 7.531 ($R_a$ = 2.3 Bohr) and 7.532 ($R_a$ = 2.5 Bohr)}. 
+        \end{itemize} 
+	\end{small}
+\end{frame}	
+}	
+		%================================================================================================
+		%CORE LEAKAGE PROBLEM AND ITS SOLUTION
+		%================================================================================================
+{\nologo
+		\begin{frame}
+			\frametitle{Core leakage problem and its solutions}
+	          \begin{small}	          	          
+				\begin{itemize}
+					\item Valence states are orthogonal to the core states as long as the core states are confined in the region of the atomic sphere. 
+					%This is only possible if the core states are deep in energy and sphere sizes are large.
+					\item A system with core states close to the WIEN2k default core separation energy of -6 Ry (for example, 2p states of Al or 5s states in Pt), a portion of the core wave function will eventually spill out from the region of the atomic-spheres. 
+				\end{itemize}
+			
+			\begin{figure}
+				\includegraphics[width=6cm,height=4cm]{pdf/Al_rkmax10_V00_extra_no_extra.pdf}
+			\end{figure}
+             Core leakage can be mitigated	
+            
+			\begin{itemize}
+				\item Core states higher in energy can be described by local orbitals (LO).
+				\item Instead of using Janak's identity,  a trace of the core correction can be used.
+				\item Core potential outside the atomic spheres can be modified so that it is more realistically resembles that of a real solid.
+			\end{itemize}
+		    
+    	\end{small}	
+		\end{frame}
+}
+
+%================================================================================================
+% After core correction 
+%================================================================================================
+
+\begin{frame}
+	\frametitle{After core correction is solved}
+	\begin{small}
+		\begin{figure}
+			\includegraphics[width=3.5cm,height=3.5cm]{pdf/simp_Rmt_dependency_LAPW_no_extpole.pdf} \hfil
+			\includegraphics[width=3.5cm,height=3.5cm]{pdf/simp_Rmt_dependency_LAPW_extpole.pdf} \hfil
+			\includegraphics[width=3.5cm,height=3.5cm]{pdf/simp_Rmt_dependency_LAPW_no_extpole_LO.pdf}
+		\end{figure}
+	    \begin{itemize}
+	    	\item First figure: pressure calculated using the simple pressure formula but the potential outside the atomic sphere is calculated as $V_{00}(r)|_{r>R_a} =\frac{R_a*V_{00}(R_a)}{r}$
+	    	\item Second figure: same as the first figure but $V_{00}(r)|_{r>R_a} = a_0+a_1*r+a_2*r^2$.
+	    	\item Third figure: same as the first figure but the 2p state of Al is described using higher energy local orbitals.
+	    	\item With the above correction; $a_0^{(\sig)}$ = 7.522 ($R_a$ = 2.1 Bohr), 7.523 ($R_a$ = 2.3 Bohr) and 7.523 ($R_a$ = 2.5 Bohr). 
+	    \end{itemize}
+	\end{small}
+\end{frame}
+
+%================================================================================================
+% Acknowledgment 
+%================================================================================================
+
+\begin{frame}
+	\frametitle{Discussion and Outlook}
+	\begin{small}
+		\begin{itemize}
+			\item The stress tensor formalism for LAPW, APW+lo, LDA and GGA is derived  and implemented in the WIEN2k code.
+			\item Core potential is modified and extrapolated outside of the atomic spheres to mitigate the core leakage problem and the dependence of the stress tensor on the choice of an atomic sphere.
+			
+			\item A relatively larger base set for stress calculations is needed than is normally used for the total energy calculation.
+			\item For metallic systems, calculations using the FD method converge faster and require a relatively smaller basis set and smaller k-mesh compared to the tetrahedron method.
+			\item The dependence of the stress tensor on other input parameters is the same as on the total energy
+			\item The non-spherical potential described by $lm$ = 2m is only important in the lower symmetrical structure.
+			
+			\item The formalism valid for the non-relativistic limit. In the relativistic calculation, an additional contribution only needs to be taken into account in the valence kinetic stress tensor.
+		\end{itemize}
+	\end{small}
+\end{frame}      				
+	
+	
+	
+	
+	\begin{frame}
+		\frametitle{NOTES}
+		In a solid calculation of force only gives the position of atomic in the unit cell but it doesn't tells anything about the lattice or cell parameter which is the principle qauntity to carried out the macroscopic property of a solid. SO what do we do there is we take a volume $V_0$ and run a DFT calculation which gives us total energy of system in that configuration, then we choose next volume, let say $V_1$ and we do again DFT calculation. In this way we carried out same calculation for a numbers of volume. finally we plot a graph energy vs Volume and minimum point of that curves we take as optimiye lattice parameter. \\
+		
+		If system possession higher sysmmetry then this calculations would not be that demanding, of course it is a time consuming process but not the demanding one, however process become very tedious and complicate if we go from higher symmetry to lower symmetry crystal structure, where volume optimization mean optimizing many parameters of crystal structure. if we just go to tetragonal system from cubic , there we have optimiye c by a ratio, so the calculations are two step process.
+	\end{frame}
+	
+	\begin{frame}
+		\frametitle{Hellmann-Feynman theorem in DFT}
+		\vspace{-6mm}
+		\begin{itemize}
+			\item external potential $V_\lambda (\br)$ depending on parameter $\lambda$   		
+			\item finite basis representation $\psi_i^\lambda(\br) = \sum_{\beta} c_{i\beta}^\lambda\phi_{\beta}^\lambda(\br)$ of KS orbitals $\psi_i^\lambda(\br) $ with arbitrary basis set $ \phi_\alpha^\lambda (\br)$ which is possible non-orthogonal and may depend on $\lambda$
+			\item generalized eigenvalue problem built from Hamiltonian and overlap matrices
+			{ \tiny
+				\begin{eqnarray*}
+					\sum_{\beta} \Big[ H_{\alpha \beta}^\lambda - \varepsilon_i^\lambda S_{\alpha \beta}^\lambda \Big]c_{i\beta}^\lambda = 0, \qquad \text{where} \qquad H_{\alpha \beta}^\lambda = \int d^3r\phi_{\alpha}^{*\lambda}(\br)H_{SCF}^\lambda \phi_{\beta}^{\lambda}(\br), \qquad
+					S_{\alpha \beta}^\lambda = \int d^3r\phi_{\alpha}^{*\lambda}(\br)\phi_{\beta}^{\lambda}(\br)
+				\end{eqnarray*}
+			}
+			\item generalized Pulay forces
+			{\tiny
+				\begin{eqnarray*}   	       	    	
+					\frac{d E^\lambda}{d \lambda} = \int d^3r \frac{dV_\lambda(\br)}{d\lambda}\rho^\lambda(\br) 
+					+ \sum_i\sum_{\alpha \beta} c_{i\alpha}^{* \lambda}c_{i\beta}^{\lambda} \int d^3r \Bigg[\frac{d \phi_\alpha^{\lambda *}}{d\lambda} \Big( H_{SCF}^\lambda - \varepsilon_i^\lambda \Big) \phi_\alpha^\lambda(\br) + \phi_\alpha^{*\lambda}(\br)\Big( H_{SCF}^\lambda - \varepsilon_i^\lambda \Big)\frac{d \phi_\alpha^{\lambda }}{d\lambda}
+					\Bigg] 
+				\end{eqnarray*}
+			}
+			\item Pulay terms vanish identical if basis set $\phi_\beta^\lambda(\br)$ is independent of $\lambda$
+			\item \textbf{Pulay forces :} absent for plane waves, important for atomic centered basis
+			\item \textbf{Pulay stresses :}  minor corrections for plane waves, major complications for atomic$-$centered basis sets
+		\end{itemize}   
+	\end{frame}
+	
+	
+	
+	%================================================================================================
+	%COMPUTATIONAL CUTOFF PARAMETERS
+	%================================================================================================
+	\begin{frame}
+		\frametitle{Computaional cutoff or Convergence check}
+		\vspace{-6mm}
+		% The accuracy of calculations depends on the cutoff energy, muffin-tin radius, method to determine the occupancy of the electrons %and the number of k-mesh used for the integration in the IBZ etc.
+		\begin{center}
+			\includegraphics[height=0.45\textheight]{pdf/valence_Rkmax_variation.pdf}  \qquad
+			\includegraphics[height=0.45\textheight]{pdf/SIM_PRESS_Rkmax_variation.pdf}  
+		\end{center} 
+	\end{frame}
+	
+	\begin{frame}
+		\frametitle{Computaional cutoff or Convergence check}
+		\vspace{-6mm}
+		\begin{center}
+			\includegraphics[height=0.45\textheight]{pdf/Valence_lmax_variation.pdf} \qquad
+			\includegraphics[height=0.45\textheight]{pdf/SIM_PRESS_Lmax_variation.pdf}    
+		\end{center} 
+	\end{frame}
+
+
+%ELastic constants from the second paper
+%data location = /home/kbelbase/TU\_WIEN\_PhD/data/RESULTS\_ZnO\_TiO2/Result\_TiO2/Rkmax8p5
+%/home/kbelbase/TU_WIEN_PhD/data/RESULTS_ZnO_TiO2/Result_TiO2/Rkmax8p5
+%\begin{table}
+%  \caption{ A comparison of the equilibrium lattice parameters, $a_0$ and $c_0$, obtained from the fifth order polynomial fit to the total energy and
+	%    directly from stress tensor formula, Eq. (\ref{final_stress_tensor112}), for TiO2. In the rows, 'energy' and 'stress' are to indicate the result obtained
+	%    by using the total energy calculations and the analytical stress tensor, respectively }
+%		\label{TiO2_a_and_c}
+%		\begin{tabular}{c c c}
+	%			\hline \hline
+	%			& $a_0$ (Bohr) & $c_0$ (Bohr)    \\[0.5ex]
+	%			\hline
+	%			energy & 7.182 & 18.306  \\[1ex]
+	%			\hline
+	%			stress & 7.182 & 18.304  \\ [1ex]
+	%			\hline \hline
+	%		\end{tabular}
+%\end{table}
+
+
+%\subsection{Elastic Constants}
+%
+%A calculation of elastic constants can also serve as a significant check of the accuracy of individual tensor components of our stress tensor implementation beyond hydrostatic stress.
+%Cubic system have three independent
+%elastic constants $C_{11}$, $C_{12}$, and $C_{44}$ which can be calculated either from the stress-strain relationship or second derivatives of the total energy.
+%The latter strategy may be realized by numerically determining the following three linear conbinations:
+%
+%\begin{itemize}
+%	\item If we calculate total energies for different cubic volumes and carry out a BM fit of these data, we directly obtain the bulk modulus $B$ as a by-product of this fit.
+%	On the other hand, $B$ can be expressed as the combination 
+%	\begin{eqnarray}\label{Bulk_modulus_express}
+	%		B = \frac{C_{11} + 2C_{12}}{3}
+	%	\end{eqnarray}
+%	of the elastic constants, $C_{11}$ and $C_{12}$.
+%	\item Furthermore, if the volume conserving tetragonal deformation 
+%	\begin{eqnarray}
+	%		1+\epsilon = 
+	%		\begin{pmatrix}
+		%			1+\epsilon & 0 & 0 \\
+		%			0  &  1+\epsilon & 0 \\
+		%			0  &   0    &  \frac{1}{(1+\epsilon)^2}
+		%		\end{pmatrix}	       ,
+	%	\end{eqnarray}
+%	is applied in a cubic system, then the relation
+%	\begin{eqnarray}
+	%		\label{C11-C12_cal}
+	%		E(\epsilon) = E_0 + 3( C_{11} - C_{12} )\Omega_0 \epsilon^2, 
+	%	\end{eqnarray}
+%	can be used to obtain the combination $C_{11} - C_{12}$ proportional to the curvature of $E(\epsilon)$,
+%	where $E_0$ represents the energy of the system in its initial state with unit cell volume $\Omega_0$.
+%	\item Finally, to obtain $C_{44}$ the volume conserving shear deformation 
+%	\begin{eqnarray}
+	%		1+\epsilon = 
+	%		\begin{pmatrix}
+		%			1 & \epsilon & 0 \\
+		%			\epsilon  &  1 & 0 \\
+		%			0  &   0    &  \frac{1}{1-\epsilon^2}
+		%		\end{pmatrix}	       
+	%	\end{eqnarray}
+%	is applied to obtain the total energy 
+%	\begin{eqnarray}\label{Energy_for_C44}
+	%		E(\epsilon) = E_0 + 2C_{44}\Omega_0\epsilon^2
+	%	\end{eqnarray}
+%\end{itemize}
+%
+%\begin{table}
+%	\caption{ Elastic constants calculated by the fitting of total energies (energy-strain) and directly from the stress-strain relationship for different material are presented in units of GPa.
+	%		(This table is not yet completed.)}
+%	\label{Elastic_constants}
+%	\begin{tabular}{ccccc}
+	%		\hline\hline			
+	%		Systems & Methods &  $C_{11}$ & $C_{12}$ & $C_{44}$    \\
+	%		\hline
+	%		\multirow{2}{*}{Si}   & stress-strain & 165.8 & 63.2 &\\
+	%		& energy-strain        &  162.2      &  64.2   & \\       
+	%		%\hline
+	%		%&  &  & &\\ 
+	%		%\hline
+	%		% &   &  &  &\\
+	%		\hline\hline
+	%	\end{tabular}
+%\end{table}
+%
+%
+%On the other hand, given a set of values {\color{blue} $\sigma_{11}=\sigma_{11}(\eps),\, \sigma_{22}=\sigma_{22}(\eps)$, }
+%the elastic constants $C_{11}$ and $C_{12}$ can be numerically determined from the stress-strain relationships 
+%\begin{eqnarray}
+%	\label{Elastic_from_stress}
+%	\sigma_{11} &=& C_{11} \epsilon+O(\teps^2) \\
+%	\label{Elastic_from_stress1}
+%	\sigma_{11} &=& C_{12} \epsilon+O(\teps^2)
+%\end{eqnarray}
+%In Table \ref{Elastic_constants} the values $C_{11}$ and $C_{12}$ obtained from Eqs. (\ref{Bulk_modulus_express}) and (\ref{C11-C12_cal}) are compared to those resulting
+%from Eqs. (\ref{Elastic_from_stress}) and (\ref{Elastic_from_stress1}).
+
